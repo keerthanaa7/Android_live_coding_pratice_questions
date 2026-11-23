@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -29,7 +30,9 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -102,16 +105,93 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val postsViewModelSearch: PostsViewModelSearch by viewModels {
+        viewModelFactory {
+            initializer {
+                PostsViewModelSearch(postRepository)
+            }
+        }
+    }
+
+    private val postsViewModelPagination: PostsViewModelPagination by viewModels {
+        viewModelFactory {
+            initializer {
+                PostsViewModelPagination(postRepository)
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            //SearchDebounce(postviewmodel)
+            //SearchDebounce(postsViewModelSearch)
             // Navigation(postsViewModelNav)
             // Timer(postsViewModelTimer)
             //  AutoScrolling(postsViewModelNav)
             //  ValidateForm(formViewmodel)
-            PullToRefresh(postsViewModelPullToRefresh)
+            // PullToRefresh(postsViewModelPullToRefresh)
+            inMemoryPagination(postsViewModelPagination)
+        }
+    }
+}
+
+@Composable
+fun inMemoryPagination(postsViewModelPagination: PostsViewModelPagination) {
+    val uistate by postsViewModelPagination.uistate.collectAsStateWithLifecycle()
+    val liststate = rememberLazyListState()
+
+    val shouldLoadMore = remember {
+        derivedStateOf {
+            val layoutinfo = liststate.layoutInfo
+            val totalitems = layoutinfo.totalItemsCount
+            val lastvisibleIndex = layoutinfo.visibleItemsInfo.lastOrNull()?.index?:0
+
+            totalitems > 0 && lastvisibleIndex >= (totalitems-3)
+        }
+    }
+
+    LaunchedEffect(shouldLoadMore.value) {
+        if(shouldLoadMore.value ){
+            val successState = uistate as? PostUIStatePagination.Success
+            if(successState != null && !successState.isPaging && successState.hasmorepage){
+                postsViewModelPagination.loadNextPage()
+            }
+        }
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+    ) {
+        when (val state = uistate) {
+            is PostUIStatePagination.Loading -> CircularProgressIndicator(
+                modifier = Modifier.align(
+                    Alignment.Center
+                )
+            )
+
+            is PostUIStatePagination.Success ->{
+                LazyColumn(modifier = Modifier.fillMaxSize(), state = liststate) {
+                    items(state.posts, key = {it.id}) { post ->
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(text = "post title ${post.title}")
+                        }
+                    }
+                    if(state.isPaging){
+                        item {
+                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center){
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                            }
+                        }
+
+                    }
+                }
+
+            }
+            is PostUIStatePagination.Error -> Text(
+                "error ${state.message}",
+                modifier = Modifier.align(Alignment.Center)
+            )
         }
     }
 }
@@ -133,7 +213,9 @@ fun PullToRefresh(postsViewModelPullToRefresh: PostsViewModelPullToRefresh) {
             )
 
             is PostUIStatePullToRefresh.Success ->
-                PullToRefreshBox(isRefreshing = state.isRefreshing, onRefresh = {postsViewModelPullToRefresh.refersh()}) {
+                PullToRefreshBox(
+                    isRefreshing = state.isRefreshing,
+                    onRefresh = { postsViewModelPullToRefresh.refersh() }) {
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
                         items(state.posts) { post ->
                             Column(modifier = Modifier.fillMaxWidth()) {
@@ -143,7 +225,7 @@ fun PullToRefresh(postsViewModelPullToRefresh: PostsViewModelPullToRefresh) {
                     }
                 }
 
-                    is PostUIStatePullToRefresh.Error -> Text(
+            is PostUIStatePullToRefresh.Error -> Text(
                 "error ${state.message}",
                 modifier = Modifier.align(Alignment.Center)
             )
@@ -317,12 +399,12 @@ fun Navigation(postsViewModelNav: PostsViewModelNav) {
 }
 
 @Composable
-fun SearchDebounce(postsViewModel: PostsViewModel) {
-    val search by postsViewModel.searchQuery.collectAsStateWithLifecycle()
-    val uistate by postsViewModel.uistate.collectAsStateWithLifecycle()
+fun SearchDebounce(postsViewModelSearch: PostsViewModelSearch) {
+    val search by postsViewModelSearch.searchQuery.collectAsStateWithLifecycle()
+    val uistate by postsViewModelSearch.uistate.collectAsStateWithLifecycle()
     Column(modifier = Modifier.fillMaxSize()) {
         TextField(
-            value = search, onValueChange = { postsViewModel.onQueryChanged(it) },
+            value = search, onValueChange = { postsViewModelSearch.onQueryChanged(it) },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp)
@@ -333,13 +415,13 @@ fun SearchDebounce(postsViewModel: PostsViewModel) {
                 .weight(1f)
         ) {
             when (val state = uistate) {
-                is PostUIState.Loading -> CircularProgressIndicator(
+                is PostUIStateSearch.Loading -> CircularProgressIndicator(
                     modifier = Modifier.align(
                         Alignment.Center
                     )
                 )
 
-                is PostUIState.Success ->
+                is PostUIStateSearch.Success ->
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
                         items(state.posts) { post ->
                             Column(modifier = Modifier.fillMaxWidth()) {
@@ -348,7 +430,7 @@ fun SearchDebounce(postsViewModel: PostsViewModel) {
                         }
                     }
 
-                is PostUIState.Error -> Text(
+                is PostUIStateSearch.Error -> Text(
                     "error ${state.message}",
                     modifier = Modifier.align(Alignment.Center)
                 )

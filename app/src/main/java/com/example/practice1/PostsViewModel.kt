@@ -23,23 +23,7 @@ sealed interface PostUIState{
 class PostsViewModel(private val postRepository: PostRepository) : ViewModel(){
 
     private val uiStateMutable = MutableStateFlow<PostUIState>(PostUIState.Loading)
-
-    private val searchQuerymutable = MutableStateFlow("")
-    val searchQuery = searchQuerymutable.asStateFlow()
-
-    val uistate = combine(uiStateMutable, searchQuerymutable){ state, query ->
-        if(state is PostUIState.Success){
-            if(query.isBlank()){
-                state
-            }else{
-                val filteredposts = state.posts.filter {post -> post.title.contains(query) || post.body.contains(query) }
-                PostUIState.Success(filteredposts)
-            }
-        }else{
-            state
-        }
-    }.debounce(300).distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000),
-        PostUIState.Loading)
+    val uistate = uiStateMutable.asStateFlow()
 
     init {
         fetchPosts()
@@ -59,9 +43,5 @@ class PostsViewModel(private val postRepository: PostRepository) : ViewModel(){
                 uiStateMutable.value = PostUIState.Error("${e}")
             }
         }
-    }
-
-    fun onQueryChanged(newQuery: String){
-        searchQuerymutable.value = newQuery
     }
 }
